@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920" />
+  <title>DocDoomScroll</title>
+
+  <!-- Google Cast Application Framework v3 receiver SDK -->
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --navy:   #08091a;
+      --cyan:   #00e5ff;
+      --violet: #7b2fff;
+      --dim:    rgba(255,255,255,0.35);
+      --surface: rgba(8,9,26,0.85);
+    }
+
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--navy);
+      color: #fff;
+      font-family: -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── CAF Media Player ──────────────────────────────────────────────────── */
+    cast-media-player {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      --theme-hue: 192;
+      --progress-color: var(--cyan);
+      --splash-background: var(--navy);
+      --splash-image: none;
+      --buffering-color: var(--cyan);
+    }
+
+    /* ── Crossfade overlay (sits above video, below UI) ───────────────────── */
+    #fade {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      background: var(--navy);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.45s ease;
+    }
+    #fade.visible { opacity: 1; }
+
+    /* ── Idle / Splash Screen ──────────────────────────────────────────────── */
+    #idle {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      background: radial-gradient(ellipse 80% 70% at 50% 55%, #0a1640 0%, var(--navy) 70%);
+      transition: opacity 0.7s ease;
+    }
+    #idle.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Pulsing rings behind the logo */
+    .pulse-rings {
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(0,229,255,0.35);
+      animation: pulse-out 3s ease-out infinite;
+    }
+    .ring:nth-child(2) { animation-delay: 1s; }
+    .ring:nth-child(3) { animation-delay: 2s; }
+
+    @keyframes pulse-out {
+      0%   { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(2.8); opacity: 0; }
+    }
+
+    /* Logo content */
+    .idle-content {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      z-index: 1;
+    }
+    .idle-badge {
+      background: var(--violet);
+      color: #fff;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      padding: 8px 24px;
+      border-radius: 40px;
+      animation: breathe 3s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: 0.85; transform: scale(1); }
+      50%       { opacity: 1;    transform: scale(1.03); }
+    }
+    .idle-title {
+      font-size: 96px;
+      font-weight: 900;
+      color: var(--cyan);
+      letter-spacing: -2px;
+      line-height: 1;
+      animation: breathe 3s ease-in-out infinite;
+      animation-delay: 0.3s;
+    }
+    .idle-sub {
+      font-size: 30px;
+      color: var(--dim);
+      letter-spacing: 0.5px;
+    }
+    .idle-waiting {
+      margin-top: 24px;
+      font-size: 22px;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    /* ── Session info — top right ──────────────────────────────────────────── */
+    #session-info {
+      position: absolute;
+      top: 44px;
+      right: 64px;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--surface);
+      border: 1px solid rgba(0,229,255,0.18);
+      border-radius: 40px;
+      padding: 12px 28px;
+      backdrop-filter: blur(12px);
+      opacity: 0;
+      transform: translateY(-16px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    #session-info.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .session-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--cyan);
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+    #group-name {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+    }
+    #member-count {
+      font-size: 18px;
+      color: var(--dim);
+    }
+
+    /* ── Bottom info bar ───────────────────────────────────────────────────── */
+    #info-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 20;
+      padding: 80px 72px 48px;
+      background: linear-gradient(
+        to top,
+        rgba(8,9,26,0.97) 0%,
+        rgba(8,9,26,0.75) 50%,
+        transparent 100%
+      );
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 48px;
+      align-items: end;
+      transform: translateY(100%);
+      transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #info-bar.visible { transform: translateY(0); }
+
+    /* Left column */
+    .info-left { min-width: 0; }
+
+    #reel-title {
+      font-size: 46px;
+      font-weight: 800;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 10px;
+      line-height: 1.1;
+    }
+    #reel-saved-by {
+      font-size: 22px;
+      color: var(--dim);
+      margin-bottom: 14px;
+    }
+    #reel-saved-by span {
+      color: rgba(0,229,255,0.75);
+      font-weight: 600;
+    }
+    #mood-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .mood-tag {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--cyan);
+      background: rgba(0,229,255,0.1);
+      border: 1px solid rgba(0,229,255,0.3);
+      border-radius: 8px;
+      padding: 5px 16px;
+    }
+    .mood-tag.violet {
+      color: #b388ff;
+      background: rgba(123,47,255,0.15);
+      border-color: rgba(123,47,255,0.35);
+    }
+
+    /* Right column — dose progress */
+    .info-right { text-align: right; }
+
+    #dose-name {
+      font-size: 20px;
+      color: rgba(123,47,255,0.9);
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      margin-bottom: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #progress-label {
+      font-size: 28px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 12px;
+      white-space: nowrap;
+    }
+    #progress-track {
+      height: 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.12);
+      overflow: hidden;
+    }
+    #progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--violet), var(--cyan));
+      border-radius: 3px;
+      transition: width 0.6s ease;
+      width: 0%;
+    }
+
+    /* Playback scrubber — thin line at very bottom */
+    #scrubber {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      z-index: 22;
+    }
+    #scrubber-fill {
+      height: 100%;
+      background: var(--cyan);
+      width: 0%;
+      transition: width 0.5s linear;
+    }
+
+    /* ── Reaction emojis ───────────────────────────────────────────────────── */
+    #reactions {
+      position: absolute;
+      inset: 0;
+      z-index: 28;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .reaction {
+      position: absolute;
+      bottom: 160px;
+      font-size: 72px;
+      line-height: 1;
+      animation: float-up var(--dur, 2.8s) ease-out forwards;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));
+    }
+    @keyframes float-up {
+      0%   { transform: translateY(0)    scale(0.2) rotate(var(--rot,-8deg)); opacity: 0; }
+      8%   { transform: translateY(-40px) scale(1.4) rotate(calc(var(--rot) * -0.5)); opacity: 1; }
+      75%  { transform: translateY(-280px) scale(1)  rotate(calc(var(--rot) * 0.3)); opacity: 0.85; }
+      100% { transform: translateY(-360px) scale(0.7) rotate(0deg); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. CAF video player (handles all media) -->
+  <cast-media-player></cast-media-player>
+
+  <!-- 2. Crossfade overlay between reels -->
+  <div id="fade"></div>
+
+  <!-- 3. Idle / splash screen -->
+  <div id="idle">
+    <div class="pulse-rings">
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="ring"></div>
+    </div>
+    <div class="idle-content">
+      <div class="idle-badge">watch together</div>
+      <div class="idle-title">DocDoomScroll</div>
+      <div class="idle-sub">Your watchlist. Synchronized.</div>
+      <div class="idle-waiting">Waiting for content…</div>
+    </div>
+  </div>
+
+  <!-- 4. Session info — top right corner -->
+  <div id="session-info">
+    <div class="session-dot"></div>
+    <span id="group-name">DocDoomScroll</span>
+    <span id="member-count"></span>
+  </div>
+
+  <!-- 5. Bottom info bar -->
+  <div id="info-bar">
+    <div class="info-left">
+      <div id="reel-title">—</div>
+      <div id="reel-saved-by"></div>
+      <div id="mood-tags"></div>
+    </div>
+    <div class="info-right">
+      <div id="dose-name"></div>
+      <div id="progress-label">Reel 1 of 1</div>
+      <div id="progress-track">
+        <div id="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Playback scrubber -->
+  <div id="scrubber"><div id="scrubber-fill"></div></div>
+
+  <!-- 7. Reaction emoji container -->
+  <div id="reactions"></div>
+
+  <script>
+    'use strict';
+
+    // ── CAF instances ─────────────────────────────────────────────────────────
+    const ctx           = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = ctx.getPlayerManager();
+    const PlayerState   = cast.framework.messages.PlayerState;
+    const EventType     = cast.framework.events.EventType;
+
+    // ── DOM refs ──────────────────────────────────────────────────────────────
+    const idleEl       = document.getElementById('idle');
+    const fadeEl       = document.getElementById('fade');
+    const sessionEl    = document.getElementById('session-info');
+    const infoBarEl    = document.getElementById('info-bar');
+    const reelTitleEl  = document.getElementById('reel-title');
+    const savedByEl    = document.getElementById('reel-saved-by');
+    const moodTagsEl   = document.getElementById('mood-tags');
+    const doseNameEl   = document.getElementById('dose-name');
+    const progressLbl  = document.getElementById('progress-label');
+    const progressFill = document.getElementById('progress-fill');
+    const scrubFill    = document.getElementById('scrubber-fill');
+    const groupNameEl  = document.getElementById('group-name');
+    const memberCtEl   = document.getElementById('member-count');
+    const reactionsEl  = document.getElementById('reactions');
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let hideBarTimer   = null;
+    let scrubTimer     = null;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    function showInfoBar(duration = 7000) {
+      clearTimeout(hideBarTimer);
+      infoBarEl.classList.add('visible');
+      if (duration > 0) {
+        hideBarTimer = setTimeout(() => infoBarEl.classList.remove('visible'), duration);
+      }
+    }
+
+    function hideInfoBar() {
+      clearTimeout(hideBarTimer);
+      infoBarEl.classList.remove('visible');
+    }
+
+    function crossfadeIn(cb) {
+      fadeEl.classList.add('visible');
+      setTimeout(() => {
+        if (cb) cb();
+        fadeEl.classList.remove('visible');
+      }, 460);
+    }
+
+    function updateScrubber() {
+      clearInterval(scrubTimer);
+      scrubTimer = setInterval(() => {
+        const dur = playerManager.getDuration();
+        const pos = playerManager.getCurrentTimeSec();
+        if (dur > 0) {
+          scrubFill.style.width = `${(pos / dur) * 100}%`;
+        }
+      }, 800);
+    }
+
+    function stopScrubber() {
+      clearInterval(scrubTimer);
+    }
+
+    // Build mood tag pills — Core Symptoms get violet, community/custom get cyan
+    const CORE_SYMPTOMS = new Set([
+      'Funny','Uplifting','Tearjerker','Badass','Dark Humor',
+      'Cute','Family Friendly','Inspiring','Mind-blowing',
+      'Soothing','Dark','Hype','Cringey','Wholesome','Iconic',
+    ]);
+    function renderMoodTags(tags) {
+      moodTagsEl.innerHTML = (tags || []).map(tag =>
+        `<span class="mood-tag${CORE_SYMPTOMS.has(tag) ? ' violet' : ''}">${tag}</span>`
+      ).join('');
+    }
+
+    // ── Metadata display ──────────────────────────────────────────────────────
+
+    function updateDisplay() {
+      const mediaInfo  = playerManager.getMediaInformation();
+      if (!mediaInfo) return;
+
+      const meta   = mediaInfo.metadata   || {};
+      const custom = mediaInfo.customData || {};
+
+      // Reel title
+      reelTitleEl.textContent = meta.title || custom.title || 'Untitled';
+
+      // Saved by
+      if (custom.savedBy) {
+        savedByEl.innerHTML = `Saved by <span>${custom.savedBy}</span>`;
+        savedByEl.style.display = '';
+      } else {
+        savedByEl.style.display = 'none';
+      }
+
+      // Mood tags
+      renderMoodTags(custom.moodTags || []);
+
+      // Dose info
+      const queueItems = playerManager.getQueueItems() || [];
+      const currentId  = playerManager.getCurrentItemId();
+      const pos   = custom.dosePosition
+        || (currentId != null
+          ? queueItems.findIndex(i => i.itemId === currentId) + 1
+          : 1);
+      const total = custom.doseTotal || queueItems.length || 1;
+
+      progressLbl.textContent  = `Reel ${pos} of ${total}`;
+      progressFill.style.width = `${Math.round((pos / total) * 100)}%`;
+
+      if (custom.doseName) {
+        doseNameEl.textContent    = custom.doseName;
+        doseNameEl.style.display  = '';
+      } else {
+        doseNameEl.style.display  = 'none';
+      }
+
+      // Session / group info
+      if (custom.groupName) {
+        groupNameEl.textContent = custom.groupName;
+        memberCtEl.textContent  = custom.memberCount
+          ? `${custom.memberCount} watching`
+          : '';
+        sessionEl.classList.add('visible');
+      }
+    }
+
+    // ── Player events ─────────────────────────────────────────────────────────
+
+    playerManager.addEventListener(EventType.PLAYER_STATE, (e) => {
+      switch (e.state) {
+        case PlayerState.PLAYING:
+          idleEl.classList.add('hidden');
+          fadeEl.classList.remove('visible');
+          updateDisplay();
+          showInfoBar(7000);
+          updateScrubber();
+          break;
+
+        case PlayerState.BUFFERING:
+        case PlayerState.LOADING:
+          fadeEl.classList.add('visible');
+          stopScrubber();
+          break;
+
+        case PlayerState.PAUSED:
+          // Keep info bar visible while paused
+          showInfoBar(0);
+          stopScrubber();
+          break;
+
+        case PlayerState.IDLE:
+          stopScrubber();
+          scrubFill.style.width = '0%';
+          // Wait a beat before showing idle screen in case next reel loads immediately
+          setTimeout(() => {
+            if (playerManager.getPlayerState() === PlayerState.IDLE) {
+              fadeEl.classList.remove('visible');
+              hideInfoBar();
+              sessionEl.classList.remove('visible');
+              idleEl.classList.remove('hidden');
+            }
+          }, 1200);
+          break;
+      }
+    });
+
+    // Crossfade when media starts loading (queue advances to next reel)
+    playerManager.addEventListener(EventType.MEDIA_STATUS, () => {
+      // Re-render metadata each time status changes (catches queue advances)
+      updateDisplay();
+    });
+
+    // ── Reaction emoji system ─────────────────────────────────────────────────
+
+    const REACTION_NS = 'urn:x-cast:com.docdoomscroll.reactions';
+
+    ctx.addCustomMessageListener(REACTION_NS, (event) => {
+      try {
+        const data = event.data;
+        if (data && data.type === 'REACTION' && data.emoji) {
+          spawnReaction(data.emoji, data.x, data.y);
+        }
+      } catch (_) { /* ignore malformed */ }
+    });
+
+    function spawnReaction(emoji, xFrac, yFrac) {
+      const el  = document.createElement('div');
+      el.className   = 'reaction';
+      el.textContent = emoji;
+
+      const x   = xFrac != null ? xFrac : Math.random() * 0.75 + 0.1;
+      const rot = (Math.random() * 28 - 14) + 'deg';
+      const dur = (2.2 + Math.random() * 1.0).toFixed(2) + 's';
+
+      el.style.left = `${x * 100}%`;
+      el.style.setProperty('--rot', rot);
+      el.style.setProperty('--dur', dur);
+
+      if (yFrac != null) {
+        el.style.bottom = `${(1 - yFrac) * 100}%`;
+      }
+
+      reactionsEl.appendChild(el);
+      el.addEventListener('animationend', () => el.remove(), { once: true });
+    }
+
+    // ── Intercept queue item load for crossfade ───────────────────────────────
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.LOAD,
+      (request) => {
+        // Trigger fade before the new reel starts
+        fadeEl.classList.add('visible');
+        return request;
+      }
+    );
+
+    // ── Start the receiver ────────────────────────────────────────────────────
+    ctx.start({
+      statusText:                  'DocDoomScroll',
+      maxInactivity:               3600,
+      skipMPLAudioInitialization:  false,
+    });
+  </script>
+</body>
+</html>
